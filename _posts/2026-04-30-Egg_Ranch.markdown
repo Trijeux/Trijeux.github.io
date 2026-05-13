@@ -93,19 +93,21 @@ Je me donne 9 semaines pour sortir une **alpha/beta jouable**. La cible interne 
 
 La règle d'or : **ne jamais prendre de retard sur la fin de la semaine 5**. Si à ce moment-là j'ai plusieurs poules dans un enclos qui mangent et pondent, le cœur du jeu est là et le reste suit.
 
-| Semaine | Dates | Objectif | Livrable |
-|---------|-------|----------|----------|
-| **S1** | 4 → 10 mai | Apprentissage UE + projet from scratch + contrôleur FPS basique | Je marche, je tourne, je saute dans une scène vide |
-| **S2** | 11 → 17 mai | L'aspirateur (raycast + attraction) | Les cubes volent vers moi quand je vise |
-| **S3** | 18 → 24 mai | Stockage + relâchement + UI inventaire | Boucle aspirer / stocker / relâcher complète |
-| **S4** | 25 → 31 mai | Les poules : Blueprint + IA basique + ponte d'œufs | Une poule erre, mange et pond |
-| **S5** | 1 → 7 juin | L'écosystème : grain, types de poules, enclos | 3 types de poules dans un enclos qui pondent |
-| **S6** | 8 → 14 juin | Économie : marchand + UI pièces + améliorations | Je vends des œufs et j'achète des upgrades |
-| **S7** | 15 → 21 juin | Zone d'exploration + capture poules sauvages | Boucle complète du jeu jouable |
-| **S8** | 22 → 28 juin | Polish : assets, sons, particules, game feel | Le jeu a une vraie identité visuelle |
-| **S9** | 29 juin → 2 juillet | Build + tests + corrections + finalisation | Un .exe jouable de bout en bout |
+> 🟢 **Update 13 mai 2026 — 2 semaines d'avance.** Grâce à une session marathon de 6h pendant un jour normalement OFF, les semaines **S1, S2 et S3 sont bouclées**. La boucle complète *aspirer → stocker → relâcher* est fonctionnelle, et j'attaque la S4 (les poules) avec deux semaines de marge sur le planning officiel. Cible révisée en interne : projet terminé **mi-juin** au lieu du 2 juillet.
 
-### Semaine 1 — Apprentissage et fondations
+| Semaine | Dates | Objectif | Livrable | Statut |
+|---------|-------|----------|----------|--------|
+| **S1** | 4 → 10 mai | Apprentissage UE + projet from scratch + contrôleur FPS basique | Je marche, je tourne, je saute dans une scène vide | ✅ **TERMINÉE** |
+| **S2** | 11 → 17 mai *(bouclée le 13)* | L'aspirateur (raycast + attraction) | Les cubes volent vers moi quand je vise | ✅ **TERMINÉE** |
+| **S3** | 18 → 24 mai *(bouclée le 13, en avance)* | Stockage + relâchement + UI inventaire | Boucle aspirer / stocker / relâcher complète | ✅ **TERMINÉE** |
+| **S4** | 25 → 31 mai | Les poules : Blueprint + IA basique + ponte d'œufs | Une poule erre, mange et pond | ⏳ À venir |
+| **S5** | 1 → 7 juin | L'écosystème : grain, types de poules, enclos | 3 types de poules dans un enclos qui pondent | ⏳ À venir |
+| **S6** | 8 → 14 juin | Économie : marchand + UI pièces + améliorations | Je vends des œufs et j'achète des upgrades | ⏳ À venir |
+| **S7** | 15 → 21 juin | Zone d'exploration + capture poules sauvages | Boucle complète du jeu jouable | ⏳ À venir |
+| **S8** | 22 → 28 juin | Polish : assets, sons, particules, game feel | Le jeu a une vraie identité visuelle | ⏳ À venir |
+| **S9** | 29 juin → 2 juillet | Build + tests + corrections + finalisation | Un .exe jouable de bout en bout | ⏳ À venir |
+
+### Semaine 1 — Apprentissage et fondations ✅ TERMINÉE
 
 **Objectif :** Apprendre les bases d'Unreal Engine 5, créer un projet from scratch, et avoir un personnage FPS qui se balade librement dans une scène vide avec ZQSD, souris et saut.
 
@@ -113,7 +115,7 @@ C'est volontairement plus calme côté production, mais plus dense côté appren
 
 **Piège à éviter :** ne pas commencer l'aspirateur cette semaine. Si je suis tenté, c'est que je veux brûler les étapes. Un contrôleur fait main mais bien compris vaut 10 fois mieux qu'un template qu'on bricole sans comprendre.
 
-### Semaines 2 & 3 — L'aspirateur
+### Semaines 2 & 3 — L'aspirateur ✅ TERMINÉES (le 13 mai, en avance)
 
 **Objectif :** Construire la mécanique principale du jeu en deux temps.
 
