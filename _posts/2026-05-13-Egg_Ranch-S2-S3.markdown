@@ -1,0 +1,133 @@
+---
+layout: post
+title:  "Egg Ranch — Semaines 2 & 3 : L'aspirateur"
+date:   2026-05-13 22:00:00 +0200
+categories: Blog_Post Unreal_Engine Egg_Ranch
+hidden : true
+---
+
+Les **semaines 2 et 3** sont normalement deux semaines bien distinctes du planning : la S2 pour construire l'aspirateur, la S3 pour le stockage et l'UI. Sauf que les fondations posées en S1 étaient si propres que j'ai tout enchaîné dans **une seule session de ~6h le mercredi 13 mai** — un jour normalement OFF où j'ai pu dev exceptionnellement. À la fin de la journée, la boucle complète *aspirer → stocker → relâcher* tournait.
+
+Ce devlog est donc le récap des deux semaines combinées.
+
+---
+
+## 1. L'aspirateur — Line Trace et attraction physique
+
+Le cœur du gameplay. L'idée : viser un objet, maintenir le clic, et l'attirer à soi à la manière du vacpack de Slime Rancher.
+
+### Le Line Trace
+
+Côté input : `IA_Suck` (Bool) mappée sur le clic gauche. Sur `Triggered`, je lance un **Line Trace By Channel** (pas un Sphere Trace — j'ai préféré la précision pour ne pas aspirer ce que je ne vise pas) :
+
+- **Start** : `Get Camera Location`
+- **End** : `Start + Forward Vector × SuckDistance`
+- **SuckDistance** : variable Instance Editable, autour de **1500-2000** unités
+
+J'ai laissé `Draw Debug Type = For One Frame` pendant tout le dev pour visualiser le rayon. Très utile pour comprendre pourquoi un Line Trace ne hit pas (souvent : le mauvais canal de collision côté objet).
+
+<video src="/image/Egg_Ranch_S2_Aspirator.mp4" autoplay loop muted playsinline width="800"></video>
+
+
+### La détection : tag Suckable
+
+Sur le Hit Actor, je fais `Is Valid` (sinon crash si on vise le vide) puis `Actor Has Tag` avec le tag `Suckable`. Tous les cubes de test ont ce tag dans leur Details panel. Plus tard, les poules et les œufs l'auront aussi.
+
+### L'attraction — Add Force avec Accel Change
+
+C'est là que la magie opère. Direction = `(Camera Location − Hit Actor Location)` → `Normalize` → `× SuckForce` → **`Add Force`** sur le Hit Component.
+
+LE détail crucial : cocher **`Accel Change`** sur Add Force. Sans ça, la masse de l'objet influence l'attraction (un cube de 177 kg met une éternité, un œuf de 5 kg fuse). Avec `Accel Change`, on dit à Unreal "c'est une accélération, pas une force" — et tout est aspiré à la même vitesse quelle que soit la masse. Indispensable pour un gameplay cohérent.
+
+`SuckForce` autour de **2500-3500** selon le feeling voulu.
+
+<img src="/image/Egg_Ranch_S2_AddForce_AccelChange.png" alt="Graphe Blueprint — node Add Force avec Accel Change coché" width="800">
+
+
+### Le clamp de vélocité
+
+Premier problème quand tout marchait : les objets arrivaient à 1000 km/h dans la tronche dès qu'ils étaient libres. J'ai ajouté un clamp :
+
+1. `Get Physics Linear Velocity` → `Vector Length`
+2. Si `> SuckSpeedMax` → recalculer la vélocité avec une longueur clampée → `Set Physics Linear Velocity`
+
+C'est moins propre qu'une vraie courbe d'attraction, mais largement suffisant pour le feeling.
+
+---
+
+## 2. Le stockage — version simple S3
+
+À l'époque, mon inventaire était volontairement basique : une variable `Inventory` typée **Array of Actor Class Reference**. Quand un objet aspiré arrive assez près (`Vector Length` entre lui et la caméra `< 150`), je fais `Get Class` du Hit Actor → `Add to Inventory` → `Destroy Actor`. L'objet disparaît "absorbé" et seul son TYPE est stocké.
+
+C'était suffisant pour valider la boucle, mais ça ne permettait pas de choisir quel type relâcher. **Ce système sera complètement refait en S4** quand j'aurai besoin de sélectionner (grain à donner à une poule, œufs à vendre). Cf. le devlog S4 et son système à slots.
+
+---
+
+## 3. Le relâchement
+
+`IA_Release` (clic droit) sur `Started`. Logique en LIFO (dernier entré, premier sorti) :
+
+1. `Branch` : `Length > 0` (y a-t-il quelque chose à relâcher ?)
+2. `Last Index` + `Get` pour récupérer la dernière classe stockée
+3. `Make Transform` avec `Camera Location + Forward × DropDistance` pour la position de spawn
+4. **`Spawn Actor From Class`** avec la classe récupérée
+5. Sur l'acteur spawné : `Get Component By Class` (pour récupérer le composant racine) → **`Set Mobility (Movable)`** → **`Set Physics Linear Velocity`** pour le pousser devant
+6. `Remove Index` pour retirer du tableau
+
+Le `Set Mobility = Movable` est obligatoire avant tout `Set Physics Linear Velocity` sur un acteur spawné, sinon Unreal balance une erreur *"Mobility must be Movable"*. Évident une fois qu'on le sait, énervant la première fois.
+
+<video src="/image/Egg_Ranch_S2_Release.mp4" autoplay loop muted playsinline width="800"></video>
+
+
+---
+
+## 4. L'UI HUD
+
+J'ai créé `WBP_Crosshair` avec un `Text Block` nommé `InventoryText` (case `Is Variable` cochée pour pouvoir y accéder en code) dans un `Canvas Panel`. Variable `HUDWidget` promue dans `BP_PlayerCharacter`, stockée depuis le `Create Widget` au `BeginPlay`.
+
+Fonction `UpdateInventoryUI` : construit le texte avec `Append` + `To Text` ("Objets : 3"), assigné au Text Block.
+
+**Choix volontaire : event-driven plutôt que binding.** Les bindings UMG (`bind` dans le designer du widget) tournent à chaque frame. C'est pratique mais c'est du polling déguisé. J'ai préféré appeler `UpdateInventoryUI` explicitement aux 3 moments où l'inventaire change : `BeginPlay`, après chaque `Destroy Actor` (ajout), après chaque `Remove Index` (retrait). Plus propre et plus performant.
+
+---
+
+## 5. Les autres galères de la session
+
+**Le Line Trace qui ne hit pas certains objets.** Cause : la réponse de collision côté objet. Il faut que `Visibility = Block` pour que le raycast les détecte. Par défaut sur certains objets ce n'est pas le cas.
+
+**Objets qui passaient à travers le sol.** Réglages de collision : `WorldStatic = Block` sur le sol et sur les objets.
+
+**Artefacts visuels avec le debug du rayon.** Avec **TSR** (Temporal Super Resolution, l'anti-aliasing par défaut d'UE5), j'avais des trainées dégueulasses sur le rayon de debug et les objets en mouvement rapide. Passé en **FXAA** pour le dev, ça a tout réglé. TSR est génial pour le rendu final mais peu adapté quand on fait du debug visuel.
+
+---
+
+## 6. Les "ah ouais d'accord" de ces deux semaines
+
+**Simulate Physics est obligatoire** pour qu'un objet réagisse aux forces. La masse influence la chute et les collisions mais **pas l'attraction grâce à `Accel Change`**.
+
+**`Add Force` vs `Add Impulse`** : Add Force est continu (à appliquer chaque tick tant qu'on aspire), Add Impulse est instantané (un coup sec — utile pour la propulsion au relâchement). Confondre les deux donne soit un objet inerte, soit un objet qui part en orbite.
+
+**Mobility** : Static, Stationary, ou Movable. Tout objet qui doit bouger en physique doit être Movable, et les acteurs spawnés à la volée doivent être passés en Movable explicitement avant toute modif de transform/physique.
+
+**Nodes purs vs impératifs.** Certains nodes (comme `Get Class`, `Vector Length`, `Get Actor Location`) n'ont pas de pin d'exécution — ils se calculent quand on lit leur sortie. Important pour comprendre que la branche d'exec ne passe pas par eux, et que les rebrancher inutilement crée du bruit visuel sans changer le comportement.
+
+**`Get Class` retourne le TYPE d'un acteur**, pas une référence. C'est ce qui permet de "respawner" plus tard le même type d'objet sans avoir à stocker un blueprint asset explicitement.
+
+---
+
+## 7. Pourquoi en une session de 6h
+
+Plusieurs choses se sont alignées :
+
+- **Les fondations S1 étaient solides.** Enhanced Input bien compris, structure propre, Git en place — zéro friction sur les bases.
+- **Le concept est simple et systémique.** Raycast → force → tableau → spawn. Pas de modèles, pas d'animations, pas de game design tordu, que de la logique.
+- **Une référence mentale claire.** Je savais exactement ce que je voulais (le vacpack de Slime Rancher), donc zéro temps perdu à hésiter sur le design.
+- **L'élan.** Une fois l'aspirateur qui marche, le stockage et le relâchement réutilisent les mêmes briques (collision, spawn, classes). Tout est venu naturellement.
+
+---
+
+## 8. État après ces deux semaines
+
+La boucle **aspirer → stocker → relâcher** fonctionne de bout en bout. On peut viser un cube, le faire venir, le ranger dans un inventaire qui affiche son contenu, puis le relâcher devant soi avec un coup d'impulsion. C'est jouable, c'est satisfaisant, et c'est la base sur laquelle vont se brancher les poules, les œufs et le grain dans les semaines suivantes.
+
+Et surtout : **2 semaines d'avance sur le planning officiel**. La S4 démarre dans la foulée.

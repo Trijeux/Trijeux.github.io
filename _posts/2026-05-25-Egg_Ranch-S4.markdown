@@ -1,0 +1,198 @@
+---
+layout: post
+title:  "Egg Ranch — Semaine 4 : Mes poules font de la résistance"
+date:   2026-05-25 18:00:00 +0200
+categories: Blog_Post Unreal_Engine Egg_Ranch
+hidden : true
+---
+
+Mise à jour sur la **Semaine 4**, celle des poules. Sur le papier : "une boule qui se balade et qui pond des œufs". Dans la pratique, c'est de loin la semaine la plus dense techniquement depuis le début — deux gros chantiers parallèles : faire vivre les poules d'un côté, et **refaire complètement l'inventaire en système à slots type Slime Rancher** de l'autre. Ce dernier n'était même pas au planning, mais il est devenu évident qu'il était indispensable pour la suite.
+
+J'ai aussi eu une excellente leçon sur les différences entre **Pawn** et **Character**, sur le fonctionnement des **Custom Events** et des nodes Latent, et sur le fait que les **Structures Blueprint** sont copiées par valeur. Beaucoup de "ah ouais d'accord" cette semaine.
+
+---
+
+## Chantier A — Les poules (BP_Chicken)
+
+### Ce que j'ai créé
+
+`BP_Chicken` : corps sphérique blanc, bec conique, deux yeux. Tag `Suckable` (les poules sont aspirables comme les cubes). **Collisions custom** : `Pawn = Overlap` (sinon le joueur bascule en marchant ou en sautant sur la poule), `Visibility = Block` (pour que le raycast d'aspiration les détecte).
+
+À côté : `BP_ChickenAIController` (le "cerveau" séparé de la poule, comme dans tout bon découpage Unreal), `BP_Egg` (un ovoïde de masse 5 kg avec le tag Suckable), et un **Nav Mesh Bounds Volume** dans la scène pour définir la zone marchable (visible en vert avec la touche P en édition).
+
+<img src="/image/Egg_Ranch_S4_NavMesh.png" alt="Nav Mesh visible en vert (touche P) — zone marchable pour les poules" width="800">
+
+<video src="/image/Egg_Ranch_S4_Chicken_Idle.mp4" autoplay loop muted playsinline width="800"></video>
+
+
+### Galère #1 — Character vs Pawn
+
+J'avais d'abord fait `BP_Chicken` en **Character**, comme mon joueur. Erreur. Mon aspirateur a complètement cessé de fonctionner sur elles : les cubes étaient aspirés sans problème, mais les poules restaient plantées à me regarder.
+
+Après quelques heures de débogage, j'ai compris : le **Character Movement Component ignore purement et simplement `Add Force`**. Il a son propre système de mouvement qui prend le dessus sur la physique. Pour un objet qu'on veut pouvoir manipuler physiquement, il faut redescendre d'un cran et utiliser **Pawn** (la classe parente, plus brute), plus un `Floating Pawn Movement` pour le déplacement.
+
+J'ai reparenté via `File → Reparent Blueprint` (et surtout PAS via le bouton "Parent class" en haut à droite qui ouvre Visual Studio si on tombe sur la classe C++).
+
+**Leçon :** Character = personnages contrôlés humanoïdes (joueur, ennemis bipèdes). Pawn = créatures, objets custom, tout ce qui doit pouvoir être manipulé physiquement. Les classes "haut niveau" comme Character apportent du confort mais cachent des choses.
+
+### Galère #2 — Aspirer une poule SANS casser les cubes
+
+Une fois la poule en Pawn, nouveau problème : une poule a une IA et un Floating Pawn Movement à désactiver pendant l'aspiration. Un cube n'a rien de tout ça. Si j'appliquais la logique "désactiver l'IA + activer la physique" à TOUS les objets aspirés, ça crashait sur les cubes (qui n'ont pas d'IA à désactiver).
+
+Solution propre : **`Cast to BP_Chicken`** comme filtre de type. Si le cast réussit → c'est une poule → on applique la logique de switch (IA off, physique on). Si le cast échoue → c'est un cube ou un œuf → aspiration directe. Élégant, et c'est devenu un pattern que je réutilise.
+
+<img src="/image/Egg_Ranch_S4_CastToChicken.png" alt="Cast to BP_Chicken — pattern de filtre par type avec deux branches" width="800">
+
+
+Bug bête découvert au passage : j'utilisais `Get World Location` au lieu de `Get Actor Location` à un endroit. Symptomatique des trucs qu'on copie-colle d'un tuto sans comprendre la différence.
+
+### Galère #3 — La machine à états physique / IA
+
+Quand on aspire la poule, il faut désactiver le `Floating Pawn Movement` et activer `Simulate Physics`. Quand on la relâche, après ~1 seconde de physique pour qu'elle retombe proprement, il faut réactiver l'IA et désactiver la physique pour qu'elle reparte se balader. Et si on re-aspire la poule pendant la transition, elle doit rester en mode physique sans bugger.
+
+J'ai construit une vraie petite **machine à états** avec deux variables booléennes (`PhysicIsActive` / `PhysicLastActive`) comparées dans l'`Event Tick`, avec un `AND` et un `Delay`. Les transitions sont gérées via deux Custom Events.
+
+C'est le truc dont je suis le plus fier de la semaine — j'ai raisonné comme un dev qui pense aux cas limites, pas juste "faire marcher pour le cas nominal".
+
+<video src="/image/Egg_Ranch_S4_Chicken_Suck_Release.mp4" autoplay loop muted playsinline width="800"></video>
+
+
+### Galère #4 — L'IA qui crashait au démarrage
+
+Pour le déplacement, j'ai écrit un Custom Event `Wander` : la poule prend un point aléatoire atteignable (`Get Random Reachable Point in Radius`, un node **pur** sans pin d'exécution), y va avec `AI Move To`, attend un `Delay`, et **se rappelle elle-même**. Une boucle infinie propre.
+
+Premier piège : j'ai voulu mettre ça dans une **fonction**. Impossible. **`AI Move To` est un node Latent** (il prend du temps : le perso doit physiquement parcourir le chemin), et les nodes Latent sont **interdits dans les fonctions**, qui sont synchrones et renvoient leur résultat instantanément. Les nodes Latent sont reconnaissables à leur petite horloge sur l'icône. Solution : utiliser un **Custom Event** dans l'Event Graph, qui lui peut contenir du latent.
+
+Deuxième piège : erreur cryptique `Accessed None trying to read K2_GetPawn` au lancement. Cause : j'appelais `Wander` depuis `BeginPlay` de l'AI Controller, mais à ce moment le controller ne possède pas encore la poule (`Get Controlled Pawn = null`). Solution : appeler `Wander` depuis **`Event On Possess`**, qui se déclenche quand le controller prend possession du pawn. Là le pawn existe forcément. Question de timing, pas de logique.
+
+<img src="/image/Egg_Ranch_S4_Wander_Event.png" alt="BP_ChickenAIController — Event On Possess et Custom Event Wander récursif" width="800">
+
+
+### Galère #5 — L'œuf qui spawn dans le sol
+
+La ponte : Custom Event `LayEgg` qui spawn un `BP_Egg` derrière la poule (`Actor Location − Forward Vector × distance`). Quand la poule était trop près du sol, l'œuf apparaissait DANS le sol → Unreal détectait la pénétration et le détruisait immédiatement → erreur `pending kill / garbage` dans les logs.
+
+Fix : sur le `Spawn Actor From Class`, mettre `Collision Handling Override = Always Spawn, Ignore Collisions` et ajouter un petit offset en hauteur sur la position de spawn.
+
+<video src="/image/Egg_Ranch_S4_LayEgg.mp4" autoplay loop muted playsinline width="800"></video>
+
+
+### Préparé pour plus tard
+
+J'ai posé d'avance les variables `bHasEaten` et `EggLayDelay` : la poule ne pondra que quand elle aura mangé. Le branchement avec le grain attend la S5. J'ai aussi posé `GroundCheckDistance` pour la détection du sol via Line Trace vertical. C'est plus propre de poser ces variables au moment où la logique alentour est fraîche dans la tête.
+
+---
+
+## Chantier B — L'inventaire à slots (le gros bonus pas prévu)
+
+### Pourquoi je l'ai fait
+
+L'ancien inventaire de la S3 (un simple `Array of Class Reference` + un compteur texte) ne permettait pas de **choisir** quel type d'objet relâcher. Or pour la suite (nourrir les poules avec le bon grain, vendre les bons œufs), il FAUT pouvoir sélectionner un type précis.
+
+J'ai donc tout refait en système à slots, exactement comme le **vacpack de Slime Rancher**. Pas au planning, mais devenu évident en jouant 30 secondes au prototype.
+
+### La spec
+
+- **3 slots** (fixe pour l'instant, conçu pour être extensible plus tard)
+- **Capacité 20** par slot (extensible aussi)
+- **Sélection** : molette + touches 1/2/3 + bumpers manette LB/RB
+- **Logique d'ajout** : un objet rejoint un slot existant du même type s'il n'est pas plein ; sinon le slot actif s'il est vide ; sinon le premier slot vide ; sinon **rejet** (recraché avec une petite impulsion)
+- **Priorité au type** : si le slot d'un type est plein, rejet MÊME si d'autres slots sont vides (exactement comme dans Slime Rancher quand ton slot de carottes est plein)
+
+### Découverte majeure — Les Structures (Struct)
+
+Je ne connaissais pas les **Struct** en Blueprint. C'est un conteneur qui regroupe plusieurs variables liées en un type unique. J'ai créé `S_InventorySlot` avec deux champs : `ItemClass` (Class Reference) et `Quantity` (Integer). Mon inventaire est devenu un `Array of S_InventorySlot` de taille 3.
+
+<img src="/image/Egg_Ranch_S4_Struct_InventorySlot.png" alt="Struct S_InventorySlot — ItemClass et Quantity" width="800">
+
+
+### Galère #6 — Les Struct sont copiées par valeur
+
+J'ai voulu modifier directement la quantité d'un slot récupéré avec un `Get`. Ça ne marchait pas — la valeur ne se mettait jamais à jour dans le tableau.
+
+Compris (après une bonne heure à me demander pourquoi) : **un `Get` sur un élément de tableau retourne une COPIE, pas une référence**. Modifier la copie ne change rien dans le tableau d'origine.
+
+Solution : modifier la copie (avec `Set Members` ou `Make S_InventorySlot`) puis la **réinjecter avec `Set Array Elem`** au bon index. Contre-intuitif au début, indispensable à savoir. Et attention à bien réinjecter à l'index courant de la boucle (`Array Index`), pas un autre.
+
+### La fonction TryAddToInventory — le cœur du système
+
+Fonction qui prend une `ItemClass` en entrée et retourne un booléen `Success`.
+
+1. **Boucle #1 (`For Each Loop`)** : cherche un slot du même type (`Item Class == Class`) ET pas plein (`Quantity < SlotCapacity`, avec un `AND`). Trouvé → incrémenter la quantité → réinjecter avec `Set Array Elem` → `Return true`.
+2. Si la boucle se termine sans trouver (pin `Completed`) : check le **slot actif**. `Is Valid Class` sur son `ItemClass` — **piège** : `Is Valid Class = TRUE` veut dire "le slot a un type" donc OCCUPÉ ; `FALSE` = vide. C'est sur le `False` qu'on crée le nouveau type dans le slot actif.
+3. Si le slot actif est occupé : **Boucle #2** cherche le premier slot vide.
+4. Si aucun slot disponible : `Return false` (rejet).
+
+**Vue d'ensemble de la fonction :**
+
+<img src="/image/Egg_Ranch_S4_TryAddToInventory_OverView.png" alt="TryAddToInventory — vue d'ensemble du graphe Blueprint" width="800">
+
+**Zoom sur la partie gauche (Boucle #1 — recherche d'un slot du même type) :**
+
+<img src="/image/Egg_Ranch_S4_TryAddToInventory_Zoom_Left.png" alt="TryAddToInventory — Boucle #1 cherchant un slot existant du même type non plein" width="800">
+
+**Zoom sur la partie droite (slot actif + Boucle #2 — recherche d'un slot vide) :**
+
+<img src="/image/Egg_Ranch_S4_TryAddToInventory_Zoom_Right.png" alt="TryAddToInventory — check du slot actif et Boucle #2 cherchant un slot vide" width="800">
+
+
+### Galère #7 — Tout le reste du refactoring
+
+Une fois la logique d'ajout posée, il a fallu refaire tout autour :
+
+- **Aspiration** rebranchée : `Get Class` du Hit Actor → `TryAddToInventory` → si `Success`, `Destroy Actor` ; sinon rejet (pulse d'impulsion).
+- **Ancien relâchement** désactivé (incompatible) et refait pour qu'il sorte un objet du **slot actif uniquement**, décrémente sa quantité, et libère le slot quand `Quantity` atteint 0.
+- **6 nouvelles Input Actions** pour la sélection : `IA_ScrollSlot` (Axis1D pour la molette), `IA_NextSlot` et `IA_PreviousSlot` (bumpers manette), `IA_Slot1` / `IA_Slot2` / `IA_Slot3` (touches 1/2/3). Plus 2 fonctions réutilisables `NextSlot` / `PreviousSlot` avec **wrap-around** (slot 3 → slot 0).
+- **Pulse de rejet** : si l'inventaire ne peut pas accueillir l'objet, un **`Add Impulse`** (avec `Vel Change` coché) le repousse dans la direction opposée à la caméra. **`Add Impulse` et pas `Add Force`** : on veut un coup sec, pas une poussée continue.
+
+### Galère #8 — L'UI des slots et le piège du Size Box
+
+Création de `WBP_InventorySlot`, un widget réutilisable : `Size Box → Border → Overlay (icône + Text Block quantité)`. Trois slots de ce widget placés dans un `Horizontal Box` au sein de `WBP_Crosshair`.
+
+J'ai galéré à fixer la taille de la Border. Compris deux choses :
+
+1. **Un `Size Box` avec `Width Override` / `Height Override` est nécessaire pour forcer une taille fixe** sur un widget réutilisable.
+2. **L'aperçu du widget seul est trompeur** — la vraie taille appliquée ne se voit que quand le widget est placé dans son parent. J'ai perdu du temps à essayer de régler la taille dans le WBP isolé.
+
+Autre piège : le slot s'étirait à 100 de haut au lieu de 80. Cause : `Vertical Alignment = Fill` dans le Horizontal Box → l'enfant remplit. Mis en `Center` pour qu'il garde sa taille définie.
+
+Côté logique : fonctions `UpdateSlot` (par slot : met à jour la quantité, le highlight si actif, la visibilité de l'icône) et `UpdateInventoryUI` (refresh des 3 slots d'un coup), appelées à chaque changement (aspiration, relâchement, sélection, BeginPlay).
+
+<video src="/image/Egg_Ranch_S4_Inventory_Slots.mp4" autoplay loop muted playsinline width="800"></video>
+
+<img src="/image/Egg_Ranch_S4_WBP_InventorySlot.png" alt="WBP_InventorySlot dans le designer UMG" width="800">
+
+
+---
+
+## Les "ah ouais d'accord" globaux de la semaine
+
+- **Pawn vs Character** : Add Force ne marche pas sur un Character.
+- **Nodes Latent interdits dans les fonctions** → Custom Events obligatoires pour `AI Move To`, `Delay`, etc.
+- **`Event On Possess` vs `BeginPlay`** pour l'IA : question de timing, le pawn doit exister.
+- **`Get Random Reachable Point in Radius`** est un node pur (pas d'exec).
+- **Structures copiées par valeur** → `Set Array Elem` obligatoire pour persister une modif.
+- **`Add Impulse` (instantané) vs `Add Force` (continu)** — choisir selon le type de poussée voulue.
+- **Le piège de l'aperçu de widget isolé** + le rôle du Size Box et des alignements dans les conteneurs UMG.
+
+---
+
+## Le fil rouge de la semaine
+
+En relisant mes notes, je remarque que **presque toutes mes galères viennent du même type de cause** : un système qui marchait pour un cas simple cassait quand je l'étendais à un cas plus complexe.
+
+- Character qui marchait pour le joueur, mais pas pour les poules.
+- Aspiration qui marchait pour les cubes, mais pas pour les poules.
+- Inventaire S3 qui tenait pour un compteur, mais pas pour un vrai gameplay.
+
+À chaque fois, la solution était de **généraliser proprement** plutôt que de bricoler avec des conditions partout. Le `Cast to BP_Chicken` pour filtrer le type, la machine à états pour gérer les transitions, le système à slots pour donner du sens à l'inventaire. C'est peut-être LA leçon de la semaine : **quand un truc se met à coincer en l'étendant, c'est que l'abstraction d'origine n'était pas la bonne, pas qu'il faut empiler des `if`**.
+
+---
+
+## État à la fin de la semaine
+
+- Des poules autonomes qui se baladent sur le Nav Mesh, se laissent aspirer proprement, pondent des œufs (aspirables comme le reste).
+- Un système d'inventaire à slots fonctionnel de bout en bout : ramasser, trier par type, sélectionner avec molette / touches / manette, relâcher du slot actif, rejet visuel quand c'est plein, UI lisible.
+- Toujours **~2-3 semaines d'avance** sur le planning officiel.
+
+La prochaine étape, c'est la **S5** : le **grain** et le **système de faim** des poules. C'est la semaine que je m'étais juré de ne pas rater, donc je l'attaque avec une marge confortable et de la sérénité.

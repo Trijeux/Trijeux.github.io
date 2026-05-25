@@ -1,0 +1,97 @@
+---
+layout: post
+title:  "Egg Ranch — Semaine 1 : Contrôleur FPS from scratch"
+date:   2026-05-10 18:00:00 +0200
+categories: Blog_Post Unreal_Engine Egg_Ranch
+hidden : true
+---
+
+Première semaine d'Egg Ranch, et le premier objectif est volontairement frustrant pour qui veut "faire du jeu" : pas une seule mécanique de gameplay. Juste un personnage FPS qui marche, regarde, saute. Pas de poule, pas d'aspirateur, pas de ferme. Juste les fondations.
+
+J'aurais pu prendre le **template First Person** d'Epic et finir en 30 minutes. J'ai volontairement pris le **template Blank** pour câbler chaque pièce moi-même. C'est plus long, mais l'idée est simple : sur 9 semaines, je préfère une semaine "perdue" à comprendre que 8 semaines à bricoler un code que je n'ai pas écrit.
+
+---
+
+## 1. Le projet et la structure
+
+Projet créé sur le template **Blank**, donc absolument vide. J'ai posé une structure de dossiers propre dès le début : `/Game/Core/` avec des sous-dossiers `Scene`, `Props`, `Input`, `UI`, etc. Convention de nommage stricte : `BP_` pour les Blueprints, `IA_` pour les Input Actions, `IMC_` pour les Mapping Contexts, `WBP_` pour les widgets. Ça paraît anodin mais sur 9 semaines, un projet rangé évite de chercher pendant 10 minutes une variable mal nommée.
+
+**Git/GitHub** mis en place tout de suite avec un `.gitignore` Unreal correct qui exclut `Saved/`, `Intermediate/`, `Binaries/`, `DerivedDataCache/`, `Build/`. Sans ça, le repo explose en taille à cause des fichiers générés. Premier commit, push, et je sais que je peux revenir en arrière si je casse quelque chose.
+
+<img src="/image/Egg_Ranch_S1_Folder_Structure.png" alt="Arborescence Content Browser — /Game/Core/ avec sous-dossiers Scene, Props, Input, UI" width="800">
+
+
+---
+
+## 2. BP_PlayerCharacter
+
+J'ai créé `BP_PlayerCharacter` comme classe **Character** — c'est le bon choix ici, pour un perso joueur. Le Character vient déjà avec une Capsule Component, un **Character Movement Component**, et un Mesh (qu'on n'utilise pas en FPS). J'ai ajouté une **Camera Component** attachée à la racine, positionnée à hauteur des yeux, FOV un peu monté pour le feeling FPS.
+
+Le réglage qui m'a fait galérer un moment : **Use Pawn Control Rotation** sur la caméra. Sans ça, la souris ne tournait pas la vue, et j'avais du mal à comprendre pourquoi alors que tout semblait branché. C'était juste cette case à cocher.
+
+Côté `Character Movement`, j'ai réglé `Max Walk Speed`, `Jump Z Velocity` pour la hauteur de saut, et un peu d'`Air Control` pour pouvoir corriger la trajectoire en l'air.
+
+<img src="/image/Egg_Ranch_S1_PlayerCharacter_Components.png" alt="Composants de BP_PlayerCharacter — Capsule, Mesh, CharacterMovement, Camera" width="800">
+
+
+J'ai aussi créé un **`BP_EggRanchGameMode`** custom où j'ai défini `Default Pawn Class = BP_PlayerCharacter`, configuré à la fois dans **Project Settings → Maps & Modes** et dans le **World Settings** du niveau. C'est typique d'Unreal : le même réglage existe à plusieurs endroits, et il faut que les deux soient cohérents.
+
+---
+
+## 3. Enhanced Input — le gros morceau
+
+C'est de loin la partie qui m'a pris le plus de temps cette semaine. Unreal a un nouveau système d'inputs (**Enhanced Input**) qui remplace l'ancien (Action/Axis Mappings dans Project Settings). Le problème : la moitié des tutos YouTube utilisent encore l'ancien. J'ai dû filtrer pour ne suivre que les ressources récentes.
+
+Le découpage Enhanced Input, c'est :
+
+- **Input Action** : l'action abstraite (`IA_Move` en Axis2D/Vector2D, `IA_Look` en Axis2D, `IA_Jump` en Bool)
+- **Input Mapping Context** (`IMC_Default`) : associe ces actions aux vraies touches
+- **Modifiers** sur chaque mapping : pour transformer la touche en valeur utilisable
+
+### Le piège : 4 touches → un Vector2D
+
+LE truc qui m'a fait perdre du temps : **mapper WASD sur un Vector2D**. L'éditeur Unreal demande de sélectionner les touches par leur nom QWERTY (`W`, `A`, `S`, `D`), et sur mon clavier français ces touches sont physiquement aux positions Z/Q/S/D — donc le jeu, lui, tournera bien sous les doigts comme attendu. Le vrai piège n'est pas là, il est dans le mappage : 4 touches doivent produire un vecteur 2D propre (X = gauche/droite, Y = avant/arrière). Pour ça, il faut utiliser deux **Modifiers** sur chaque mapping : `Swizzle Input Axis Values` (pour permuter X et Y selon l'axe), et `Negate` (pour inverser la direction sur certaines touches). Pas intuitif du tout — on tâtonne jusqu'à ce que le mouvement soit cohérent.
+
+<img src="/image/Egg_Ranch_S1_IMC_ZQSD.png" alt="IMC_Default — mappings WASD sur IA_Move avec Modifiers Swizzle Input Axis Values et Negate" width="800">
+
+
+### Le branchement dans le Character
+
+Dans `BeginPlay` du `BP_PlayerCharacter` :
+
+1. `Get Controller` → `Get Enhanced Input Local Player Subsystem`
+2. `Add Mapping Context` avec `IMC_Default`
+
+Ensuite, sur l'Event Graph, je branche chaque Input Action sur ses events (`Started`, `Triggered`, `Completed`). Pour le mouvement : `IA_Move` (Triggered) → `Add Movement Input` avec le Forward Vector et le Right Vector du Controller. Pour la souris : `IA_Look` → `Add Controller Yaw/Pitch Input`. Pour le saut : `IA_Jump` (Started) → `Jump`.
+
+J'ai mappé aussi le **gamepad** : stick gauche sur Move, stick droit sur Look, bouton A sur Jump. Ça m'a coûté 5 minutes en plus puisque Enhanced Input rend la chose triviale — un même Input Action peut avoir plusieurs sources.
+
+---
+
+## 4. Les "ah ouais d'accord" de la semaine
+
+C'est plus calme côté production, mais c'est là que j'ai posé mes vrais fondamentaux Unreal.
+
+**Le découplage Controller / Pawn / Character.** Au début je mélangeais tout. Le **Controller** "possède" le **Pawn** — le Controller, c'est le cerveau (le joueur ou une IA), le Pawn c'est le corps. Le **Character** est juste un Pawn spécialisé avec capsule + movement component. Ce découplage devient capital dès qu'on commence à parler d'IA (en S4, mon AI Controller possède une poule).
+
+**Enhanced Input est event-driven.** Les Input Actions déclenchent des events (`Started`, `Triggered`, `Completed`, `Ongoing`) au lieu d'être checkées dans le Tick. Plus propre, plus performant, et ça force à raisonner en réaction plutôt qu'en polling.
+
+**BeginPlay vs Construction Script.** `BeginPlay` se déclenche au runtime, `Construction Script` dans l'éditeur quand on bouge l'acteur. Évident une fois compris, mais quand on débute il est facile de mettre la mauvaise logique au mauvais endroit.
+
+---
+
+## 5. Ce que je n'ai pas fait (anti-scope creep)
+
+Pas de sprint, pas de crouch, pas de lean. Juste marche + saut + regard. Pas de head bob, pas d'effets de caméra (c'est du polish, ça attend la S8). Pas de modèle de bras visible (FPS "mains vides" pour l'instant). Pas touché à l'éclairage / Lumen — désactivé jusqu'à la S8.
+
+La tentation de tout faire au lit est réelle quand les bases marchent et qu'on a envie d'avancer. La règle d'or que je m'étais fixée tient : **chaque feature en plus cette semaine, c'est une feature en moins quand le cœur du jeu sera à câbler.**
+
+---
+
+## 6. État à la fin de la semaine
+
+Un personnage FPS qui marche, tourne, saute, sans drift, sur ZQSD + souris + gamepad. Un Game Mode custom propre. Enhanced Input bien compris. Le projet est sur Git. Aucune feature de gameplay encore, mais c'est exactement ce que je voulais : **des fondations solides plutôt qu'un truc qui marche par magie**.
+
+<video src="/image/Egg_Ranch_S1_Walking.mp4" autoplay loop muted playsinline width="800"></video>
+
+J'ai bouclé plus vite que prévu — c'est cette avance prise dès la S1 qui va se transformer en marathon de 6h le 13 mai pour boucler les S2 et S3 d'un coup. Mais ça c'est la suite.
